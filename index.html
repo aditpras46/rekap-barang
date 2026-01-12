@@ -336,7 +336,9 @@
                     list.forEach((it, i) => {
                         const itemTotal = it.price * it.qty;
                         subtotal += itemTotal;
-                        sec += `${i + 1}. ${it.name} (${it.qty}x) = ${formatR(itemTotal)}\n`;
+                        // LOGIC UPDATE: Hanya tampilkan (qty)x jika qty > 1
+                        const qtyText = it.qty > 1 ? ` (${it.qty}x)` : "";
+                        sec += `${i + 1}. ${it.name}${qtyText} = ${formatR(itemTotal)}\n`;
                     });
                     if (activeGroupsCount > 1) sec += `_*Subtotal: ${formatR(subtotal)}*_\n`;
                     return sec;
