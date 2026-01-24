@@ -79,7 +79,7 @@
             const [items, setItems] = useState([]);
             const [dps, setDps] = useState([]);
             
-            // Input states (sebagai string agar bisa ketik koma)
+            // Input states (as strings to handle comma typing)
             const [itemName, setItemName] = useState("");
             const [itemPrice, setItemPrice] = useState("");
             const [itemQty, setItemQty] = useState("1");
@@ -107,7 +107,6 @@
             const pN = (v) => {
                 if (typeof v === 'number') return v;
                 if (!v) return 0;
-                // Mengubah koma menjadi titik untuk kalkulasi matematika
                 const normalized = v.toString().replace(/,/g, '.').replace(/[^\d.]/g, '');
                 const parsed = parseFloat(normalized);
                 return isNaN(parsed) ? 0 : parsed;
@@ -115,7 +114,6 @@
 
             const formatR = (n) => {
                 if (n === null || n === undefined || isNaN(n)) return "0";
-                // Format angka menggunakan standar ID (titik ribuan, koma desimal)
                 return new Intl.NumberFormat('id-ID', { maximumFractionDigits: 2 }).format(n);
             };
 
@@ -141,69 +139,7 @@
                 return uniqueNames.filter(name => name.toLowerCase().includes(customerName.toLowerCase())).slice(0, 10);
             }, [customerName, uniqueNames]);
 
-            // --- 4. EFFECTS ---
-            useEffect(() => {
-                const savedLinks = localStorage.getItem('jastip_sheet_links');
-                if (savedLinks) {
-                    try { setSheetLinks(JSON.parse(savedLinks)); } catch(e) { }
-                }
-                const savedGh = localStorage.getItem('jastip_gh_config');
-                if (savedGh) {
-                    try {
-                        const parsed = JSON.parse(savedGh);
-                        setGhToken(parsed.token || "");
-                        setGhRepo(parsed.repo || "");
-                        setGhPath(parsed.path || "transaksi_jastip.json");
-                    } catch(e) {}
-                }
-            }, []);
-
-            // Auto-detect items based on name
-            useEffect(() => {
-                const lowerName = customerName.trim().toLowerCase();
-                if (!lowerName) {
-                    setItems(prev => prev.filter(item => item.isManual));
-                    setFoundCount(0);
-                    return;
-                }
-
-                let allMatches = [];
-                ['china', 'malaysia', 'bkk'].forEach(tripKey => {
-                    const db = databases[tripKey] || [];
-                    const matches = db.filter(row => row.nama && row.nama.toLowerCase().includes(lowerName));
-                    matches.forEach(order => {
-                        allMatches.push({
-                            id: `auto-${tripKey}-${Math.random()}`,
-                            name: order.barang || "Barang",
-                            qty: pN(order.qty) || 1, 
-                            price: pN(order.harga) || 0,
-                            trip: tripKey,
-                            isManual: false 
-                        });
-                    });
-                });
-
-                setFoundCount(allMatches.length);
-                setItems(prevItems => {
-                    const manualItems = prevItems.filter(item => item.isManual);
-                    return [...manualItems, ...allMatches];
-                });
-            }, [customerName, databases]);
-
-            // --- 5. HANDLERS ---
-            const saveSettings = (newLinks) => {
-                setSheetLinks(newLinks);
-                localStorage.setItem('jastip_sheet_links', JSON.stringify(newLinks));
-            };
-
-            const updateGhConfig = (key, value) => {
-                const configs = { token: ghToken, repo: ghRepo, path: ghPath, [key]: value };
-                if (key === 'token') setGhToken(value);
-                if (key === 'repo') setGhRepo(value);
-                if (key === 'path') setGhPath(value);
-                localStorage.setItem('jastip_gh_config', JSON.stringify(configs));
-            };
-
+            // --- 4. DATA HANDLERS ---
             const processCSVData = useCallback((text, targetTrip) => {
                 try {
                     const rows = text.split(/\r?\n/).filter(row => row.trim() !== '');
@@ -240,6 +176,103 @@
                 } catch (err) { console.error(err); }
             }, []);
 
+            // --- 5. EFFECTS (AUTO REFRESH LOGIC) ---
+            useEffect(() => {
+                // 1. Load initial settings
+                const savedLinks = localStorage.getItem('jastip_sheet_links');
+                let linksObj = { china: "", malaysia: "", bkk: "" };
+                if (savedLinks) {
+                    try { 
+                        linksObj = JSON.parse(savedLinks);
+                        setSheetLinks(linksObj); 
+                    } catch(e) { }
+                }
+
+                const savedGh = localStorage.getItem('jastip_gh_config');
+                if (savedGh) {
+                    try {
+                        const parsed = JSON.parse(savedGh);
+                        setGhToken(parsed.token || "");
+                        setGhRepo(parsed.repo || "");
+                        setGhPath(parsed.path || "transaksi_jastip.json");
+                    } catch(e) {}
+                }
+
+                // 2. Function for Silent Refresh
+                const silentRefresh = async (currentLinks) => {
+                    ['china', 'malaysia', 'bkk'].forEach(async (trip) => {
+                        const url = currentLinks[trip];
+                        if (url) {
+                            try {
+                                const response = await fetch(url);
+                                if (response.ok) {
+                                    const text = await response.text();
+                                    processCSVData(text, trip);
+                                }
+                            } catch (e) { }
+                        }
+                    });
+                };
+
+                // 3. Refresh pertama kali aplikasi dibuka
+                silentRefresh(linksObj);
+
+                // 4. Set interval refresh setiap 2 menit (120.000 ms)
+                const intervalId = setInterval(() => {
+                    // Ambil links terbaru dari localStorage untuk memastikan data paling update
+                    const latestLinks = JSON.parse(localStorage.getItem('jastip_sheet_links') || '{}');
+                    silentRefresh(latestLinks);
+                }, 120000);
+
+                return () => clearInterval(intervalId);
+            }, [processCSVData]);
+
+            // Auto-detect items based on name
+            useEffect(() => {
+                const lowerName = customerName.trim().toLowerCase();
+                if (!lowerName) {
+                    setItems(prev => prev.filter(item => item.isManual));
+                    setFoundCount(0);
+                    return;
+                }
+
+                let allMatches = [];
+                ['china', 'malaysia', 'bkk'].forEach(tripKey => {
+                    const db = databases[tripKey] || [];
+                    const matches = db.filter(row => row.nama && row.nama.toLowerCase().includes(lowerName));
+                    matches.forEach(order => {
+                        allMatches.push({
+                            id: `auto-${tripKey}-${Math.random()}`,
+                            name: order.barang || "Barang",
+                            qty: pN(order.qty) || 1, 
+                            price: pN(order.harga) || 0,
+                            trip: tripKey,
+                            isManual: false 
+                        });
+                    });
+                });
+
+                setFoundCount(allMatches.length);
+                setItems(prevItems => {
+                    const manualItems = prevItems.filter(item => item.isManual);
+                    return [...manualItems, ...allMatches];
+                });
+            }, [customerName, databases]);
+
+            // --- 6. EVENT HANDLERS ---
+            const saveSettings = (newLinks) => {
+                setSheetLinks(newLinks);
+                localStorage.setItem('jastip_sheet_links', JSON.stringify(newLinks));
+            };
+
+            const updateGhConfig = (key, value) => {
+                const configs = { token: ghToken, repo: ghRepo, path: ghPath, [key]: value };
+                if (key === 'token') setGhToken(value);
+                if (key === 'repo') setGhRepo(value);
+                if (key === 'path') setGhPath(value);
+                localStorage.setItem('jastip_gh_config', JSON.stringify(configs));
+            };
+
             const handleSheetSync = async () => {
                 const url = sheetLinks[activeTrip];
                 if (!url) return setShowSettings(true);
@@ -274,7 +307,7 @@
             const totalDp = dps.reduce((a, b) => a + b.amount, 0);
             const sisa = total - totalDp;
 
-            // --- EXPORT TO GITHUB (UPDATED: ONLY CSV LINKS) ---
+            // --- EXPORT TO GITHUB ---
             const saveToGithub = async () => {
                 if (!ghToken || !ghRepo) {
                     alert("Mohon atur GitHub Token dan Repo di Settings!");
@@ -283,7 +316,6 @@
                 
                 setIsGithubSaving(true);
                 
-                // Data yang akan disimpan hanya link CSV dan metadata update
                 const dataToSave = {
                     config_name: "Jastip Sheet Links Backup",
                     last_sync: new Date().toLocaleString('id-ID'),
@@ -296,8 +328,6 @@
 
                 try {
                     const url = `https://api.github.com/repos/${ghRepo}/contents/${ghPath}`;
-                    
-                    // Ambil SHA file jika ada (untuk update/overwrite file yang sama)
                     let sha = null;
                     const getRes = await fetch(url, { headers: { "Authorization": `token ${ghToken}` } });
                     
@@ -306,7 +336,6 @@
                         sha = fileData.sha;
                     }
                     
-                    // Simpan data link CSV ke GitHub (Mengganti isi file dengan status terbaru)
                     const putRes = await fetch(url, {
                         method: "PUT",
                         headers: {
@@ -333,7 +362,7 @@
                 }
             };
 
-            // --- FINAL WA FORMAT ---
+            // --- WA FORMAT ---
             const getWA = () => {
                 let t = `${tripTitle.toUpperCase()}\n`;
                 t += `Customer: ${customerName || '-'}\n`;
@@ -619,7 +648,7 @@
                 {/* MODAL: SETTINGS & CONFIG */}
                 {showSettings && (
                     <div className="fixed inset-0 bg-black/80 z-[70] flex items-center justify-center p-4 animate-in">
-                        <div className="bg-white w-full max-w-md h-[80vh] flex flex-col p-5 border-2 border-black rounded shadow-2xl overflow-y-auto custom-scrollbar">
+                        <div className="bg-white w-full max-md h-[80vh] flex flex-col p-5 border-2 border-black rounded shadow-2xl overflow-y-auto custom-scrollbar">
                             <div className="flex justify-between items-center mb-5 border-b-2 border-black pb-3">
                                 <h3 className="font-black text-lg uppercase italic">Configuration</h3>
                                 <button onClick={() => setShowSettings(false)} className="p-1 border border-black rounded"><X size={18}/></button>
