@@ -297,7 +297,7 @@
             const totalDp = dps.reduce((a, b) => a + b.amount, 0);
             const sisa = total - totalDp;
 
-            // --- WA FORMAT ---
+            // --- WA FORMAT (REVISED WITH SUBTOTAL) ---
             const getWA = () => {
                 let t = `${tripTitle.toUpperCase()}\n`;
                 t += `Customer: ${customerName || '-'}\n`;
@@ -309,13 +309,28 @@
                     if (groups[key]) groups[key].push(it); else groups['manual'].push(it);
                 });
 
+                // Hitung berapa banyak trip yang memiliki item
+                let activeTripCount = 0;
+                Object.keys(groups).forEach(key => {
+                    if (groups[key].length > 0) activeTripCount++;
+                });
+
                 const printSec = (name, list, flag) => {
                     if (list.length === 0) return "";
                     let sec = `\nTRIP ${name} ${flag}\n`;
+                    let subTotal = 0;
+
                     list.forEach((it, i) => {
+                        const itemTotal = it.price * it.qty;
+                        subTotal += itemTotal;
                         const qtySuffix = it.qty !== 1 ? ` (${formatR(it.qty)}x)` : "";
-                        sec += `${i + 1}. ${it.name}${qtySuffix} = ${formatR(it.price * it.qty)}\n`;
+                        sec += `${i + 1}. ${it.name}${qtySuffix} = ${formatR(itemTotal)}\n`;
                     });
+
+                    // Hanya tampilkan subtotal jika ada lebih dari 1 trip aktif
+                    if (activeTripCount > 1) {
+                        sec += `   Subtotal: Rp ${formatR(subTotal)}\n`;
+                    }
                     return sec;
                 };
 
