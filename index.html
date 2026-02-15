@@ -212,11 +212,10 @@
                 return () => clearInterval(intervalId);
             }, [processCSVData]);
 
-            // REVISI: Reset list dan DP HANYA jika ganti nama customer
+            // Reset list dan DP HANYA jika ganti nama customer
             useEffect(() => {
                 const lowerName = customerName.trim().toLowerCase();
                 
-                // REVISI: Bandingkan dengan ref untuk memastikan reset hanya terjadi saat nama berubah
                 if (nameRef.current !== customerName) {
                     setDps([]); // Reset DP hanya saat nama berubah (ganti pelanggan)
                     nameRef.current = customerName;
@@ -243,9 +242,6 @@
                     });
                 });
                 setFoundCount(allMatches.length);
-                
-                // setItems(allMatches) akan secara otomatis mereset item manual yang baru ditambah
-                // karena dia me-replace seluruh array items dengan hasil pencarian database terbaru
                 setItems(allMatches); 
             }, [customerName, databases]);
 
@@ -292,6 +288,7 @@
             const totalDp = dps.reduce((a, b) => a + b.amount, 0);
             const sisa = total - totalDp;
 
+            // REVISI LOGIKA WHATSAPP: Menyesuaikan label Sisa Tagihan / Kembalian
             const getWA = () => {
                 let t = `${tripTitle.toUpperCase()}\nCustomer: ${customerName || '-'}\n------------------\n`; 
                 const groups = { china: [], bkk: [], malaysia: [], manual: [] };
@@ -313,7 +310,18 @@
                     return sec;
                 };
                 t += printSec("CHINA", groups.china, "🇨🇳") + printSec("BANGKOK", groups.bkk, "🇹🇭") + printSec("MALAYSIA", groups.malaysia, "🇲🇾") + printSec("LAINNYA", groups.manual, "📦");
-                t += `\n------------------\nTOTAL TAGIHAN\nTotal: ${formatR(total)}\n${totalDp > 0 ? `DP Masuk: ${formatR(totalDp)}\n` : ``}Sisa: ${sisa === 0 ? "LUNAS ✅" : formatR(sisa)}\n\nTerima kasih sudah berbelanja\nMohon dicek kembali ya kak`;
+                t += `\n------------------\nTOTAL TAGIHAN\nTotal: ${formatR(total)}\n${totalDp > 0 ? `DP Masuk: ${formatR(totalDp)}\n` : ``}`;
+                
+                // Logika Dinamis Label Sisa Tagihan / Kembalian
+                if (sisa === 0) {
+                    t += `Sisa Tagihan: LUNAS ✅`;
+                } else if (sisa > 0) {
+                    t += `Sisa Tagihan: ${formatR(sisa)}`;
+                } else {
+                    t += `Kembalian: ${formatR(Math.abs(sisa))}`;
+                }
+                
+                t += `\n\nTerima kasih sudah berbelanja\nMohon dicek kembali ya kak`;
                 return t;
             };
 
