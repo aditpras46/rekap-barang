@@ -79,7 +79,7 @@
             const [items, setItems] = useState([]);
             const [dps, setDps] = useState([]);
             
-            // Input states (as strings to handle comma typing)
+            // Input states
             const [itemName, setItemName] = useState("");
             const [itemPrice, setItemPrice] = useState("");
             const [itemQty, setItemQty] = useState("1");
@@ -120,13 +120,25 @@
             };
 
             const getFlag = (trip) => {
-                const flags = { china: '🇨🇳', malaysia: '🇲🇾', bkk: '🇹🇭', manual: '📦' };
+                const flags = { china: '🇨🇳', bkk: '🇹🇭', malaysia: '🇲🇾', manual: '📦' };
                 return flags[trip] || '🏳️';
             };
 
             // --- 3. MEMOS ---
             const activeCsvData = useMemo(() => databases[activeTrip] || [], [databases, activeTrip]);
             const isAutoSyncActive = useMemo(() => !!(sheetLinks.china || sheetLinks.malaysia || sheetLinks.bkk), [sheetLinks]);
+
+            // Urutan prioritas untuk sorting
+            const tripPriority = { china: 1, bkk: 2, malaysia: 3, manual: 4 };
+
+            // Items yang sudah diurutkan berdasarkan prioritas trip
+            const sortedItems = useMemo(() => {
+                return [...items].sort((a, b) => {
+                    const pA = tripPriority[a.trip] || 4;
+                    const pB = tripPriority[b.trip] || 4;
+                    return pA - pB;
+                });
+            }, [items]);
 
             const uniqueNames = useMemo(() => {
                 const names = new Set();
@@ -178,54 +190,34 @@
                 } catch (err) { console.error(err); }
             }, []);
 
-            // --- 5. EFFECTS (AUTO REFRESH LOGIC) ---
+            // --- 5. EFFECTS ---
             useEffect(() => {
-                // 1. Load initial settings
                 const savedLinks = localStorage.getItem('jastip_sheet_links');
-                let linksObj = defaultLinks; // Use default links if nothing saved
-                
+                let linksObj = defaultLinks;
                 if (savedLinks) {
-                    try { 
-                        linksObj = JSON.parse(savedLinks);
-                        setSheetLinks(linksObj); 
-                    } catch(e) { }
+                    try { linksObj = JSON.parse(savedLinks); setSheetLinks(linksObj); } catch(e) { }
                 }
-
-                // 2. Function for Silent Refresh
                 const silentRefresh = async (currentLinks) => {
-                    ['china', 'malaysia', 'bkk'].forEach(async (trip) => {
+                    ['china', 'bkk', 'malaysia'].forEach(async (trip) => {
                         const url = currentLinks[trip];
                         if (url) {
                             try {
                                 const response = await fetch(url);
-                                if (response.ok) {
-                                    const text = await response.text();
-                                    processCSVData(text, trip);
-                                }
+                                if (response.ok) processCSVData(await response.text(), trip);
                             } catch (e) { }
                         }
                     });
                 };
-
-                // 3. Refresh pertama kali aplikasi dibuka
                 silentRefresh(linksObj);
-
-                // 4. Set interval refresh setiap 2 menit (120.000 ms)
                 const intervalId = setInterval(() => {
-                    // Ambil links terbaru dari localStorage untuk memastikan data paling update
                     const latestLinks = JSON.parse(localStorage.getItem('jastip_sheet_links') || '{}');
                     silentRefresh(latestLinks);
                 }, 120000);
-
                 return () => clearInterval(intervalId);
             }, [processCSVData]);
 
-            // Reset DP saat nama customer berubah (REVISI BARU)
-            useEffect(() => {
-                setDps([]);
-            }, [customerName]);
+            useEffect(() => { setDps([]); }, [customerName]);
 
-            // Auto-detect items based on name
             useEffect(() => {
                 const lowerName = customerName.trim().toLowerCase();
                 if (!lowerName) {
@@ -233,12 +225,10 @@
                     setFoundCount(0);
                     return;
                 }
-
                 let allMatches = [];
-                ['china', 'malaysia', 'bkk'].forEach(tripKey => {
+                ['china', 'bkk', 'malaysia'].forEach(tripKey => {
                     const db = databases[tripKey] || [];
-                    const matches = db.filter(row => row.nama && row.nama.toLowerCase().includes(lowerName));
-                    matches.forEach(order => {
+                    db.filter(row => row.nama && row.nama.toLowerCase().includes(lowerName)).forEach(order => {
                         allMatches.push({
                             id: `auto-${tripKey}-${Math.random()}`,
                             name: order.barang || "Barang",
@@ -249,12 +239,8 @@
                         });
                     });
                 });
-
                 setFoundCount(allMatches.length);
-                setItems(prevItems => {
-                    const manualItems = prevItems.filter(item => item.isManual);
-                    return [...manualItems, ...allMatches];
-                });
+                setItems(prevItems => [...prevItems.filter(item => item.isManual), ...allMatches]);
             }, [customerName, databases]);
 
             // --- 6. EVENT HANDLERS ---
@@ -269,8 +255,7 @@
                 setIsLoading(true);
                 try {
                     const response = await fetch(url);
-                    const text = await response.text();
-                    processCSVData(text, activeTrip);
+                    processCSVData(await response.text(), activeTrip);
                 } catch (error) { console.error(error); }
                 finally { setIsLoading(false); }
             };
@@ -297,57 +282,45 @@
             const totalDp = dps.reduce((a, b) => a + b.amount, 0);
             const sisa = total - totalDp;
 
-            // --- WA FORMAT (REVISED WITH SUBTOTAL) ---
+            // --- WA FORMAT (URUTAN: CHINA -> BKK -> MALAYSIA) ---
             const getWA = () => {
                 let t = `${tripTitle.toUpperCase()}\n`;
                 t += `Customer: ${customerName || '-'}\n`;
                 t += `------------------\n`; 
                 
-                const groups = { china: [], malaysia: [], bkk: [], manual: [] };
+                const groups = { china: [], bkk: [], malaysia: [], manual: [] };
                 items.forEach(it => { 
                     const key = it.trip || 'manual';
                     if (groups[key]) groups[key].push(it); else groups['manual'].push(it);
                 });
 
-                // Hitung berapa banyak trip yang memiliki item
-                let activeTripCount = 0;
-                Object.keys(groups).forEach(key => {
-                    if (groups[key].length > 0) activeTripCount++;
-                });
+                let activeTripCount = Object.values(groups).filter(g => g.length > 0).length;
 
                 const printSec = (name, list, flag) => {
                     if (list.length === 0) return "";
                     let sec = `\nTRIP ${name} ${flag}\n`;
                     let subTotal = 0;
-
                     list.forEach((it, i) => {
                         const itemTotal = it.price * it.qty;
                         subTotal += itemTotal;
-                        const qtySuffix = it.qty !== 1 ? ` (${formatR(it.qty)}x)` : "";
-                        sec += `${i + 1}. ${it.name}${qtySuffix} = ${formatR(itemTotal)}\n`;
+                        sec += `${i + 1}. ${it.name}${it.qty !== 1 ? ` (${formatR(it.qty)}x)` : ""} = ${formatR(itemTotal)}\n`;
                     });
-
-                    // Hanya tampilkan subtotal jika ada lebih dari 1 trip aktif
-                    if (activeTripCount > 1) {
-                        sec += `   _*Subtotal: Rp ${formatR(subTotal)}*_\n`;
-                    }
+                    if (activeTripCount > 1) sec += `   _*Subtotal: Rp ${formatR(subTotal)}*_\n`;
                     return sec;
                 };
 
+                // URUTAN SESUAI REQUEST
                 t += printSec("CHINA", groups.china, "🇨🇳");
-                t += printSec("MALAYSIA", groups.malaysia, "🇲🇾");
                 t += printSec("BANGKOK", groups.bkk, "🇹🇭");
+                t += printSec("MALAYSIA", groups.malaysia, "🇲🇾");
                 t += printSec("LAINNYA", groups.manual, "📦");
 
                 t += `\n------------------\n`;
                 t += `TOTAL TAGIHAN\n`;
                 t += `Total Belanja: ${formatR(total)}\n`;
                 if (totalDp > 0) t += `DP Masuk: ${formatR(totalDp)}\n`;
-                
                 t += `Sisa Pembayaran: ${sisa === 0 ? "LUNAS ✅" : formatR(sisa)}\n`;
-
-                t += `\nTerima kasih sudah berbelanja\n`;
-                t += `Mohon dicek kembali ya kak`;
+                t += `\nTerima kasih sudah berbelanja\nMohon dicek kembali ya kak`;
                 return t;
             };
 
@@ -367,29 +340,23 @@
                 <header className="px-4 pt-4 pb-2 bg-white border-b border-gray-900 shrink-0">
                     <div className="flex flex-col gap-3">
                         <div className="flex justify-between items-center">
-                            <span className="text-xs font-black uppercase tracking-widest text-gray-500 flex items-center gap-1">
-                                <Smartphone size={14} /> Fashion Hunter
-                            </span>
+                            <span className="text-xs font-black uppercase tracking-widest text-gray-500 flex items-center gap-1"><Smartphone size={14} /> Fashion Hunter</span>
                             <div className="flex gap-1.5 items-center">
-                                <button 
-                                    onClick={() => activeCsvData.length > 0 && setShowDataModal(true)}
-                                    className={`flex items-center gap-1.5 px-2 py-1.5 rounded border ${activeCsvData.length > 0 ? 'border-green-200 bg-green-50 text-green-700' : 'border-gray-200 bg-gray-50 text-gray-400'}`}
-                                >
+                                <button onClick={() => activeCsvData.length > 0 && setShowDataModal(true)} className={`flex items-center gap-1.5 px-2 py-1.5 rounded border ${activeCsvData.length > 0 ? 'border-green-200 bg-green-50 text-green-700' : 'border-gray-200 bg-gray-50 text-gray-400'}`}>
                                     <div className={`w-1.5 h-1.5 rounded-full ${isAutoSyncActive ? 'bg-green-500 live-indicator' : (activeCsvData.length > 0 ? 'bg-green-500' : 'bg-gray-300')}`}></div>
                                     <span className="text-[9px] font-bold">{activeCsvData.length}</span>
                                 </button>
                                 <button onClick={() => setShowSettings(true)} className="p-1.5 border border-gray-200 rounded hover:bg-gray-100"><Settings size={14} /></button>
                                 <div className="bg-black text-white p-1.5 px-2 flex items-center gap-1 rounded-sm">
-                                    <Globe size={12} />
-                                    <span className="text-[9px] font-bold uppercase tracking-tight">{activeTrip}</span>
+                                    <Globe size={12} /><span className="text-[9px] font-bold uppercase tracking-tight">{activeTrip}</span>
                                 </div>
                             </div>
                         </div>
 
                         <div className="grid grid-cols-3 gap-2">
-                            {['china', 'malaysia', 'bkk'].map(trip => (
+                            {['china', 'bkk', 'malaysia'].map(trip => (
                                 <button key={trip} onClick={() => setActiveTrip(trip)} className={`text-[10px] font-black uppercase py-2 border border-black rounded-sm transition-all ${activeTrip === trip ? 'bg-black text-white' : 'bg-white hover:bg-gray-50'}`}>
-                                    {getFlag(trip)} {trip}
+                                    {getFlag(trip)} {trip === 'bkk' ? 'bangkok' : trip}
                                 </button>
                             ))}
                         </div>
@@ -397,12 +364,8 @@
                         <div className="flex gap-2 items-center">
                             <input value={tripTitle} onChange={(e) => setTripTitle(e.target.value)} className="font-bold text-sm outline-none flex-1 bg-transparent border-b border-transparent focus:border-black" placeholder="JUDUL NOTA..." />
                             <div className="flex gap-1">
-                                <button onClick={handleSheetSync} className="border border-black p-2 rounded-sm bg-white hover:bg-gray-50">
-                                    {isLoading ? <RefreshCw size={16} className="animate-spin"/> : <CloudDownload size={16} />}
-                                </button>
-                                <button onClick={() => fileInputRef.current?.click()} className="border border-black p-2 rounded-sm bg-white hover:bg-gray-50">
-                                    <FileUp size={16} />
-                                </button>
+                                <button onClick={handleSheetSync} className="border border-black p-2 rounded-sm bg-white hover:bg-gray-50">{isLoading ? <RefreshCw size={16} className="animate-spin"/> : <CloudDownload size={16} />}</button>
+                                <button onClick={() => fileInputRef.current?.click()} className="border border-black p-2 rounded-sm bg-white hover:bg-gray-50"><FileUp size={16} /></button>
                             </div>
                             <input type="file" ref={fileInputRef} onChange={(e) => {
                                 const file = e.target.files[0];
@@ -425,15 +388,7 @@
                                 {customerName && <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-50 text-blue-700">{foundCount} Match</span>}
                             </div>
                             <div className="relative">
-                                <input
-                                    placeholder="Ketik nama customer..."
-                                    value={customerName}
-                                    onChange={(e) => { setCustomerName(e.target.value); setShowSuggestions(true); }}
-                                    onFocus={() => setShowSuggestions(true)}
-                                    onBlur={() => setTimeout(() => setShowSuggestions(false), 200)}
-                                    autoComplete="off"
-                                    className="w-full p-2 text-base border-b border-black focus:border-black outline-none font-bold"
-                                />
+                                <input placeholder="Ketik nama customer..." value={customerName} onChange={(e) => { setCustomerName(e.target.value); setShowSuggestions(true); }} onFocus={() => setShowSuggestions(true)} onBlur={() => setTimeout(() => setShowSuggestions(false), 200)} autoComplete="off" className="w-full p-2 text-base border-b border-black focus:border-black outline-none font-bold" />
                                 {showSuggestions && customerName && suggestions.length > 0 && (
                                     <div className="absolute left-0 right-0 top-full mt-1 bg-white border-2 border-black max-h-48 overflow-y-auto z-50 rounded-sm shadow-lg">
                                         {suggestions.map((name, idx) => (
@@ -479,8 +434,8 @@
                             <div className="flex items-center gap-3">
                                 <div className="bg-black text-white p-2 rounded-sm"><LayoutList size={16} /></div>
                                 <div className="text-left">
-                                    <p className="text-[10px] font-black uppercase tracking-widest">Rincian Belanja</p>
-                                    <p className="text-[10px] text-gray-500 font-bold">{items.length} Item • {dps.length} DP Masuk</p>
+                                    <p className="text-[10px] font-black uppercase tracking-widest">Rincian Belanja (Terurut)</p>
+                                    <p className="text-[10px] text-gray-500 font-bold">{items.length} Item • {dps.length} DP</p>
                                 </div>
                             </div>
                             <ChevronRight size={18} className="text-gray-400" />
@@ -508,26 +463,24 @@
                     </div>
                 </main>
 
-                {/* MODAL: RINCIAN BELANJA */}
+                {/* MODAL: RINCIAN BELANJA (URUTAN: CHINA -> BKK -> MALAYSIA) */}
                 {showModal && (
                     <div className="fixed inset-0 bg-black/80 z-[60] flex items-center justify-center p-4 animate-in">
                         <div className="bg-white w-full max-w-md h-[85vh] flex flex-col border-2 border-black rounded shadow-2xl overflow-hidden">
-                            <div className="flex justify-between items-center p-4 border-b-2 border-black bg-white shrink-0">
-                                <h3 className="font-black text-xl uppercase italic tracking-tighter">Rincian Belanja</h3>
+                            <div className="flex justify-between items-center p-4 border-b-2 border-black shrink-0">
+                                <h3 className="font-black text-xl uppercase italic tracking-tighter">Rincian Terurut</h3>
                                 <button onClick={() => setShowModal(false)} className="p-2 border border-black rounded hover:bg-black hover:text-white"><X size={18}/></button>
                             </div>
-                            
                             <div className="flex-1 overflow-y-auto p-4 space-y-6 custom-scrollbar bg-gray-50">
-                                {/* SECTION: BARANG */}
                                 <div className="space-y-3">
                                     <div className="flex items-center gap-2 border-b border-black pb-1">
                                         <Receipt size={14} className="text-gray-400" />
                                         <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Daftar Barang ({items.length})</p>
                                     </div>
                                     <div className="grid gap-2">
-                                        {items.length === 0 && <p className="text-xs text-center py-4 text-gray-400 italic">Belum ada barang...</p>}
-                                        {items.map(it => (
-                                            <div key={it.id} className="bg-white p-3 border border-black rounded flex flex-col gap-2 shadow-sm relative group animate-in">
+                                        {sortedItems.length === 0 && <p className="text-xs text-center py-4 text-gray-400 italic">Belum ada barang...</p>}
+                                        {sortedItems.map(it => (
+                                            <div key={it.id} className="bg-white p-3 border border-black rounded flex flex-col gap-2 shadow-sm animate-in">
                                                 <div className="flex justify-between items-start">
                                                     <div className="flex items-center gap-1.5 min-w-0">
                                                         <span className="text-sm shrink-0">{getFlag(it.trip)}</span>
@@ -548,89 +501,61 @@
                                         ))}
                                     </div>
                                 </div>
-
-                                {/* SECTION: DP */}
                                 <div className="space-y-3">
-                                    <div className="flex items-center gap-2 border-b border-black pb-1">
-                                        <CreditCard size={14} className="text-gray-400" />
-                                        <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Riwayat Pembayaran DP</p>
-                                    </div>
+                                    <div className="flex items-center gap-2 border-b border-black pb-1"><CreditCard size={14} className="text-gray-400" /><p className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Riwayat DP</p></div>
                                     <div className="grid gap-2">
-                                        {dps.length === 0 && <p className="text-xs text-center py-4 text-gray-400 italic">Belum ada DP...</p>}
                                         {dps.map((d, i) => (
-                                            <div key={d.id} className="flex justify-between items-center bg-green-50 p-3 border border-green-200 rounded text-xs font-bold animate-in">
-                                                <span className="text-green-800 uppercase tracking-tighter text-[9px]">DP Terbayar #{i+1}</span>
-                                                <div className="flex items-center gap-3">
-                                                    <span className="font-mono text-green-900">Rp {formatR(d.amount)}</span>
-                                                    <button onClick={() => setDps(dps.filter(i=>i.id!==d.id))} className="text-green-300 hover:text-red-500 transition-colors"><X size={14}/></button>
-                                                </div>
+                                            <div key={d.id} className="flex justify-between items-center bg-green-50 p-3 border border-green-200 rounded text-xs font-bold">
+                                                <span className="text-green-800 uppercase text-[9px]">DP #{i+1}</span>
+                                                <div className="flex items-center gap-3"><span className="font-mono text-green-900">Rp {formatR(d.amount)}</span><button onClick={() => setDps(dps.filter(i=>i.id!==d.id))} className="text-green-300 hover:text-red-500"><X size={14}/></button></div>
                                             </div>
                                         ))}
                                     </div>
                                 </div>
                             </div>
-                            
                             <div className="p-4 bg-white border-t-2 border-black shrink-0">
-                                <div className="flex justify-between items-center mb-4 px-1">
-                                    <p className="text-[10px] font-black uppercase text-gray-400 tracking-widest">Total Sisa Tagihan</p>
-                                    <p className="font-black text-xl italic">Rp {formatR(sisa)}</p>
-                                </div>
+                                <div className="flex justify-between items-center mb-4 px-1"><p className="text-[10px] font-black uppercase text-gray-400 tracking-widest">Sisa Tagihan</p><p className="font-black text-xl italic">Rp {formatR(sisa)}</p></div>
                                 <div className="grid grid-cols-2 gap-2">
-                                   <button onClick={() => window.open(`https://wa.me/?text=${encodeURIComponent(getWA())}`)} className="bg-white border-2 border-black text-black py-3 font-black uppercase text-xs rounded-lg flex items-center justify-center gap-2 active:scale-95">
-                                        <Send size={16} /> WA
-                                    </button>
-                                    <button onClick={() => setShowModal(false)} className="bg-black text-white py-3 font-black uppercase text-xs rounded-lg active:scale-95">
-                                        Selesai
-                                    </button>
+                                   <button onClick={() => window.open(`https://wa.me/?text=${encodeURIComponent(getWA())}`)} className="bg-white border-2 border-black py-3 font-black uppercase text-xs rounded-lg flex items-center justify-center gap-2"><Send size={16} /> WA</button>
+                                   <button onClick={() => setShowModal(false)} className="bg-black text-white py-3 font-black uppercase text-xs rounded-lg">Selesai</button>
                                 </div>
                             </div>
                         </div>
                     </div>
                 )}
 
-                {/* MODAL: SETTINGS & CONFIG */}
+                {/* MODAL: SETTINGS */}
                 {showSettings && (
                     <div className="fixed inset-0 bg-black/80 z-[70] flex items-center justify-center p-4 animate-in">
                         <div className="bg-white w-full max-md h-[80vh] flex flex-col p-5 border-2 border-black rounded shadow-2xl overflow-y-auto custom-scrollbar">
-                            <div className="flex justify-between items-center mb-5 border-b-2 border-black pb-3">
-                                <h3 className="font-black text-lg uppercase italic">Configuration</h3>
-                                <button onClick={() => setShowSettings(false)} className="p-1 border border-black rounded"><X size={18}/></button>
-                            </div>
-                            
+                            <div className="flex justify-between items-center mb-5 border-b-2 border-black pb-3"><h3 className="font-black text-lg uppercase italic">Configuration</h3><button onClick={() => setShowSettings(false)} className="p-1 border border-black rounded"><X size={18}/></button></div>
                             <div className="space-y-6">
-                                {/* Google Sheets CSV Link */}
                                 <div className="space-y-3">
-                                    <div className="flex justify-between items-center">
-                                        <p className="font-black text-[10px] uppercase text-gray-400 flex items-center gap-2"><Globe size={12} /> Google Sheets (CSV)</p>
-                                    </div>
-                                    {['china', 'malaysia', 'bkk'].map(trip => (
+                                    <div className="flex justify-between items-center"><p className="font-black text-[10px] uppercase text-gray-400 flex items-center gap-2"><Globe size={12} /> Google Sheets (CSV)</p></div>
+                                    {['china', 'bkk', 'malaysia'].map(trip => (
                                         <div key={trip} className="space-y-1">
-                                            <label className="font-bold uppercase text-[10px] flex items-center gap-1">{getFlag(trip)} {trip}</label>
-                                            <input value={sheetLinks[trip]} onChange={(e) => saveSettings({...sheetLinks, [trip]: e.target.value})} placeholder="Paste link csv..." className="w-full p-2 border border-gray-200 text-xs font-mono rounded outline-none focus:border-black" />
+                                            <label className="font-bold uppercase text-[10px] flex items-center gap-1">{getFlag(trip)} {trip === 'bkk' ? 'bangkok' : trip}</label>
+                                            <input value={sheetLinks[trip]} onChange={(e) => saveSettings({...sheetLinks, [trip]: e.target.value})} placeholder="Paste link csv..." className="w-full p-2 border border-gray-200 text-xs font-mono rounded outline-none" />
                                         </div>
                                     ))}
                                 </div>
                             </div>
-
-                            <button onClick={() => setShowSettings(false)} className="w-full bg-black text-white py-3 font-black uppercase text-xs mt-6 rounded active:scale-95 transition-all shrink-0">Simpan Konfigurasi</button>
+                            <button onClick={() => setShowSettings(false)} className="w-full bg-black text-white py-3 font-black uppercase text-xs mt-6 rounded">Simpan Konfigurasi</button>
                         </div>
                     </div>
                 )}
 
-                {/* MODAL: VIEW DATABASE TRIP */}
+                {/* MODAL: VIEW DATA */}
                 {showDataModal && (
                     <div className="fixed inset-0 bg-black/80 z-[60] flex items-center justify-center p-4 animate-in">
                         <div className="bg-white w-full max-w-md h-[80vh] flex flex-col p-4 border-2 border-black rounded shadow-2xl overflow-hidden">
-                            <div className="flex justify-between items-center mb-4 border-b-2 border-black pb-3">
-                                <h3 className="font-black text-lg uppercase flex items-center gap-2"><Eye size={20} /> Data {activeTrip}</h3>
-                                <button onClick={() => setShowDataModal(false)} className="p-2 border border-black rounded hover:bg-black hover:text-white transition-all"><X size={18}/></button>
-                            </div>
+                            <div className="flex justify-between items-center mb-4 border-b-2 border-black pb-3"><h3 className="font-black text-lg uppercase flex items-center gap-2"><Eye size={20} /> Data {activeTrip}</h3><button onClick={() => setShowDataModal(false)} className="p-2 border border-black rounded hover:bg-black hover:text-white"><X size={18}/></button></div>
                             <div className="flex-1 overflow-auto custom-scrollbar border border-black rounded-sm">
                                 <table className="w-full text-xs text-left">
                                     <thead className="bg-black text-white sticky top-0"><tr><th className="p-3">Nama</th><th className="p-3">Barang</th><th className="p-3 text-right">Harga</th></tr></thead>
                                     <tbody className="divide-y divide-gray-100">
                                         {activeCsvData.map((row, idx) => (
-                                            <tr key={idx} className="hover:bg-yellow-50 cursor-pointer transition-colors" onClick={() => { setCustomerName(row.nama); setShowDataModal(false); }}>
+                                            <tr key={idx} className="hover:bg-yellow-50 cursor-pointer" onClick={() => { setCustomerName(row.nama); setShowDataModal(false); }}>
                                                 <td className="p-3 font-bold truncate max-w-[100px]">{row.nama}</td>
                                                 <td className="p-3 truncate max-w-[150px]">{row.barang}</td>
                                                 <td className="p-3 text-right font-mono">{formatR(pN(row.harga))}</td>
