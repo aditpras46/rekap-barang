@@ -95,6 +95,8 @@
             const [foundCount, setFoundCount] = useState(0);
             const [showSuggestions, setShowSuggestions] = useState(false);
             
+            const nameRef = useRef(""); // Untuk melacak perubahan nama yang sebenarnya
+
             const defaultLinks = {
                 china: "https://docs.google.com/spreadsheets/d/e/2PACX-1vQqib3ZLcjWleprwKHZgpDYArhKoeKDWgZeW_VRm7Wm8xgx-XbARU0hOo62fWzUtjC3TIIEplSnZfb7/pub?output=csv",
                 malaysia: "https://docs.google.com/spreadsheets/d/e/2PACX-1vQvDU7G0mpNsE2jSrQ6nGhX6yTT2wzlhtkOzlWmAOdmklxV66DVf3kabzZ0cZIk85CPciPcHUAtLky2/pub?output=csv",
@@ -123,11 +125,11 @@
                 return flags[trip] || '🏳️';
             };
 
+            const tripPriority = { china: 1, bkk: 2, malaysia: 3, manual: 4 };
+
             // --- 3. MEMOS ---
             const activeCsvData = useMemo(() => databases[activeTrip] || [], [databases, activeTrip]);
             const isAutoSyncActive = useMemo(() => !!(sheetLinks.china || sheetLinks.malaysia || sheetLinks.bkk), [sheetLinks]);
-
-            const tripPriority = { china: 1, bkk: 2, malaysia: 3, manual: 4 };
 
             const sortedItems = useMemo(() => {
                 return [...items].sort((a, b) => {
@@ -210,12 +212,15 @@
                 return () => clearInterval(intervalId);
             }, [processCSVData]);
 
-            // REVISI UTAMA: Reset list dan DP jika ganti nama customer
+            // REVISI: Reset list dan DP HANYA jika ganti nama customer
             useEffect(() => {
                 const lowerName = customerName.trim().toLowerCase();
                 
-                // Selalu reset DP saat nama berubah
-                setDps([]);
+                // REVISI: Bandingkan dengan ref untuk memastikan reset hanya terjadi saat nama berubah
+                if (nameRef.current !== customerName) {
+                    setDps([]); // Reset DP hanya saat nama berubah (ganti pelanggan)
+                    nameRef.current = customerName;
+                }
 
                 if (!lowerName) {
                     setItems([]); // Reset list belanja jika nama dikosongkan
@@ -239,7 +244,8 @@
                 });
                 setFoundCount(allMatches.length);
                 
-                // REVISI: Mengganti total list (reset manual) dengan hasil pencarian otomatis yang baru
+                // setItems(allMatches) akan secara otomatis mereset item manual yang baru ditambah
+                // karena dia me-replace seluruh array items dengan hasil pencarian database terbaru
                 setItems(allMatches); 
             }, [customerName, databases]);
 
