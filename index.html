@@ -264,7 +264,8 @@
                 e.preventDefault();
                 if (!itemName || !itemPrice) return;
                 const newItem = { id: `manual-${Date.now()}`, name: itemName, qty: pN(itemQty), price: pN(itemPrice), trip: activeTrip, isManual: true };
-                setItems([newItem, ...items]);
+                // Perubahan di sini: Menggunakan [...items, newItem] agar barang baru berada di posisi terakhir
+                setItems([...items, newItem]);
                 setItemName(""); setItemPrice(""); setItemQty("1");
             };
 
