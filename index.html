@@ -95,7 +95,10 @@
             const [foundCount, setFoundCount] = useState(0);
             const [showSuggestions, setShowSuggestions] = useState(false);
             
-            const nameRef = useRef(""); // Untuk melacak perubahan nama yang sebenarnya
+            const [isAutoRefreshEnabled, setIsAutoRefreshEnabled] = useState(true);
+            
+            const nameRef = useRef(""); 
+            const dpInputRef = useRef(null);
 
             const defaultLinks = {
                 china: "https://docs.google.com/spreadsheets/d/e/2PACX-1vQqib3ZLcjWleprwKHZgpDYArhKoeKDWgZeW_VRm7Wm8xgx-XbARU0hOo62fWzUtjC3TIIEplSnZfb7/pub?output=csv",
@@ -197,6 +200,8 @@
                 if (savedLinks) setSheetLinks(linksObj);
 
                 const refresh = async () => {
+                    if (!isAutoRefreshEnabled) return;
+
                     ['china', 'bkk', 'malaysia'].forEach(async (trip) => {
                         const url = linksObj[trip];
                         if (url) {
@@ -207,22 +212,31 @@
                         }
                     });
                 };
-                refresh();
-                const intervalId = setInterval(refresh, 120000);
-                return () => clearInterval(intervalId);
-            }, [processCSVData]);
 
-            // Reset list dan DP HANYA jika ganti nama customer
+                refresh();
+
+                let intervalId;
+                if (isAutoRefreshEnabled) {
+                    intervalId = setInterval(refresh, 120000);
+                }
+
+                return () => {
+                    if (intervalId) clearInterval(intervalId);
+                };
+            }, [processCSVData, isAutoRefreshEnabled]);
+
+            // REVISI LOGIK: Reset data hanya jika ganti nama, dan penapisan TEPAT (Exact Match)
             useEffect(() => {
                 const lowerName = customerName.trim().toLowerCase();
                 
+                // Jika nama pelanggan berubah (bukan kerana sync), kosongkan DP
                 if (nameRef.current !== customerName) {
-                    setDps([]); // Reset DP hanya saat nama berubah (ganti pelanggan)
+                    setDps([]); 
                     nameRef.current = customerName;
                 }
 
                 if (!lowerName) {
-                    setItems([]); // Reset list belanja jika nama dikosongkan
+                    setItems([]); 
                     setFoundCount(0);
                     return;
                 }
@@ -230,7 +244,9 @@
                 let allMatches = [];
                 ['china', 'bkk', 'malaysia'].forEach(tripKey => {
                     const db = databases[tripKey] || [];
-                    db.filter(row => row.nama && row.nama.toLowerCase().includes(lowerName)).forEach(order => {
+                    // REVISI: Menggunakan perbandingan TEPAT (===) untuk mengelakkan barangan tergabung
+                    const matches = db.filter(row => row.nama && row.nama.toLowerCase().trim() === lowerName);
+                    matches.forEach(order => {
                         allMatches.push({
                             id: `auto-${tripKey}-${Math.random()}`,
                             name: order.barang || "Barang",
@@ -241,7 +257,9 @@
                         });
                     });
                 });
+                
                 setFoundCount(allMatches.length);
+                // Menetapkan barangan automatik (ini juga meriset barangan manual pelanggan sebelumnya)
                 setItems(allMatches); 
             }, [customerName, databases]);
 
@@ -281,14 +299,19 @@
             const handleAddDp = (e) => {
                 if (e) e.preventDefault();
                 const val = pN(dpInput);
-                if (val > 0) { setDps(prev => [...prev, { id: Date.now(), amount: val }]); setDpInput(""); }
+                if (val > 0) { 
+                    setDps(prev => [...prev, { id: Date.now(), amount: val }]); 
+                    setDpInput(""); 
+                    if (dpInputRef.current) {
+                        setTimeout(() => { dpInputRef.current.focus(); }, 0);
+                    }
+                }
             };
 
             const total = items.reduce((a, b) => a + (b.price * b.qty), 0);
             const totalDp = dps.reduce((a, b) => a + b.amount, 0);
             const sisa = total - totalDp;
 
-            // REVISI LOGIKA WHATSAPP: Menyesuaikan label Sisa Tagihan / Kembalian
             const getWA = () => {
                 let t = `${tripTitle.toUpperCase()}\nCustomer: ${customerName || '-'}\n------------------\n`; 
                 const groups = { china: [], bkk: [], malaysia: [], manual: [] };
@@ -312,7 +335,6 @@
                 t += printSec("CHINA", groups.china, "🇨🇳") + printSec("BANGKOK", groups.bkk, "🇹🇭") + printSec("MALAYSIA", groups.malaysia, "🇲🇾") + printSec("LAINNYA", groups.manual, "📦");
                 t += `\n------------------\nTOTAL TAGIHAN\nTotal: ${formatR(total)}\n${totalDp > 0 ? `DP Masuk: ${formatR(totalDp)}\n` : ``}`;
                 
-                // Logika Dinamis Label Sisa Tagihan / Kembalian
                 if (sisa === 0) {
                     t += `Sisa Tagihan: LUNAS ✅`;
                 } else if (sisa > 0) {
@@ -365,8 +387,16 @@
                         <div className="flex gap-2 items-center">
                             <input value={tripTitle} onChange={(e) => setTripTitle(e.target.value)} className="font-bold text-sm outline-none flex-1 bg-transparent border-b border-transparent focus:border-black" placeholder="JUDUL NOTA..." />
                             <div className="flex gap-1">
-                                <button onClick={handleSheetSync} title="Sinkron Cloud" className="border border-black p-2 rounded-sm bg-white hover:bg-gray-50">
-                                    {isLoading ? <RefreshCw size={16} className="animate-spin"/> : <CloudDownload size={16} />}
+                                <button 
+                                    onClick={() => setIsAutoRefreshEnabled(!isAutoRefreshEnabled)} 
+                                    title={isAutoRefreshEnabled ? "Auto-Refresh Aktif" : "Auto-Refresh Mati"} 
+                                    className={`border p-2 rounded-sm bg-white ${isAutoRefreshEnabled ? 'border-green-500 text-green-600' : 'border-gray-300 text-gray-400'}`}
+                                >
+                                    <RefreshCw size={16} className={isAutoRefreshEnabled && isLoading ? "animate-spin" : ""} />
+                                </button>
+                                
+                                <button onClick={handleSheetSync} title="Sinkron Manual" className="border border-black p-2 rounded-sm bg-white hover:bg-gray-50">
+                                    <CloudDownload size={16} />
                                 </button>
                                 <button onClick={() => setShowResetConfirm(true)} title="Reset Nota" className="border border-red-600 p-2 rounded-sm bg-white text-red-600 hover:bg-red-50">
                                     <Trash2 size={16} />
@@ -428,7 +458,14 @@
                             <form onSubmit={handleAddDp} className="flex gap-3 items-end">
                                 <div className="relative flex-1 border-b border-gray-300 focus-within:border-black">
                                     <span className="absolute left-0 top-1/2 -translate-y-1/2 text-gray-400 font-bold text-sm">Rp</span>
-                                    <input placeholder="Nominal DP" value={dpInput} onChange={(e) => setDpInput(e.target.value.replace(/[^0-9,]/g, ''))} className="w-full py-2 pl-6 text-base bg-transparent outline-none font-bold text-right font-mono" inputMode="decimal" />
+                                    <input 
+                                        ref={dpInputRef}
+                                        placeholder="Nominal DP" 
+                                        value={dpInput} 
+                                        onChange={(e) => setDpInput(e.target.value.replace(/[^0-9,]/g, ''))} 
+                                        className="w-full py-2 pl-6 text-base bg-transparent outline-none font-bold text-right font-mono" 
+                                        inputMode="decimal" 
+                                    />
                                 </div>
                                 <button type="submit" className="px-4 py-1.5 bg-gray-200 text-black font-bold text-[10px] uppercase rounded hover:bg-gray-300">Add</button>
                             </form>
