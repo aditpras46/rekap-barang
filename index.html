@@ -39,6 +39,9 @@
             100% { box-shadow: 0 0 0 0 rgba(74, 222, 128, 0); }
         }
         .live-indicator { animation: pulse-green 2s infinite; }
+
+        /* Mencegah zoom otomatis pada input di mobile browser */
+        input { font-size: 16px !important; }
     </style>
 </head>
 <body>
@@ -68,7 +71,6 @@
         const Trash2 = (p) => <IconBase {...p}><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></IconBase>;
         const X = (p) => <IconBase {...p}><path d="M18 6 6 18"/><path d="m6 6 18 12"/></IconBase>;
         const RefreshCw = (p) => <IconBase {...p}><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/></IconBase>;
-        const Github = (p) => <IconBase {...p}><path d="M15 22v-4a4.8 4.8 0 0 0-1-3.5c3 0 6-2 6-5.5.08-1.25-.27-2.48-1-3.5.28-1.15.28-2.35 0-3.5 0 0-1 0-3 1.5-2.64-.5-5.36-.5-8 0C6 2 5 2 5 2c-.3 1.15-.3 2.35 0 3.5A5.403 5.403 0 0 0 4 9c0 3.5 3 5.5 6 5.5-.39.49-.68 1.05-.85 1.65-.17.6-.22 1.23-.15 1.85v4"/><path d="M9 18c-4.51 2-5-2-7-2"/></IconBase>;
 
         const App = () => {
             // --- 1. STATES ---
@@ -79,22 +81,20 @@
             const [items, setItems] = useState([]);
             const [dps, setDps] = useState([]);
             
-            // Input states
             const [itemName, setItemName] = useState("");
             const [itemPrice, setItemPrice] = useState("");
             const [itemQty, setItemQty] = useState("1");
             const [dpInput, setDpInput] = useState("");
             
-            // UI States
             const [showModal, setShowModal] = useState(false);
             const [showSettings, setShowSettings] = useState(false);
             const [showDataModal, setShowDataModal] = useState(false);
+            const [showResetConfirm, setShowResetConfirm] = useState(false);
             const [isCopied, setIsCopied] = useState(false);
             const [isLoading, setIsLoading] = useState(false);
             const [foundCount, setFoundCount] = useState(0);
             const [showSuggestions, setShowSuggestions] = useState(false);
             
-            // DEFAULT LINKS CONFIGURATION
             const defaultLinks = {
                 china: "https://docs.google.com/spreadsheets/d/e/2PACX-1vQqib3ZLcjWleprwKHZgpDYArhKoeKDWgZeW_VRm7Wm8xgx-XbARU0hOo62fWzUtjC3TIIEplSnZfb7/pub?output=csv",
                 malaysia: "https://docs.google.com/spreadsheets/d/e/2PACX-1vQvDU7G0mpNsE2jSrQ6nGhX6yTT2wzlhtkOzlWmAOdmklxV66DVf3kabzZ0cZIk85CPciPcHUAtLky2/pub?output=csv",
@@ -102,7 +102,6 @@
             };
 
             const [sheetLinks, setSheetLinks] = useState(defaultLinks);
-            
             const fileInputRef = useRef(null);
 
             // --- 2. UTILS ---
@@ -128,15 +127,14 @@
             const activeCsvData = useMemo(() => databases[activeTrip] || [], [databases, activeTrip]);
             const isAutoSyncActive = useMemo(() => !!(sheetLinks.china || sheetLinks.malaysia || sheetLinks.bkk), [sheetLinks]);
 
-            // Urutan prioritas untuk sorting
             const tripPriority = { china: 1, bkk: 2, malaysia: 3, manual: 4 };
 
-            // Items yang sudah diurutkan berdasarkan prioritas trip
             const sortedItems = useMemo(() => {
                 return [...items].sort((a, b) => {
                     const pA = tripPriority[a.trip] || 4;
                     const pB = tripPriority[b.trip] || 4;
-                    return pA - pB;
+                    if (pA !== pB) return pA - pB;
+                    return 0; 
                 });
             }, [items]);
 
@@ -193,13 +191,12 @@
             // --- 5. EFFECTS ---
             useEffect(() => {
                 const savedLinks = localStorage.getItem('jastip_sheet_links');
-                let linksObj = defaultLinks;
-                if (savedLinks) {
-                    try { linksObj = JSON.parse(savedLinks); setSheetLinks(linksObj); } catch(e) { }
-                }
-                const silentRefresh = async (currentLinks) => {
+                let linksObj = savedLinks ? JSON.parse(savedLinks) : defaultLinks;
+                if (savedLinks) setSheetLinks(linksObj);
+
+                const refresh = async () => {
                     ['china', 'bkk', 'malaysia'].forEach(async (trip) => {
-                        const url = currentLinks[trip];
+                        const url = linksObj[trip];
                         if (url) {
                             try {
                                 const response = await fetch(url);
@@ -208,23 +205,24 @@
                         }
                     });
                 };
-                silentRefresh(linksObj);
-                const intervalId = setInterval(() => {
-                    const latestLinks = JSON.parse(localStorage.getItem('jastip_sheet_links') || '{}');
-                    silentRefresh(latestLinks);
-                }, 120000);
+                refresh();
+                const intervalId = setInterval(refresh, 120000);
                 return () => clearInterval(intervalId);
             }, [processCSVData]);
 
-            useEffect(() => { setDps([]); }, [customerName]);
-
+            // REVISI UTAMA: Reset list dan DP jika ganti nama customer
             useEffect(() => {
                 const lowerName = customerName.trim().toLowerCase();
+                
+                // Selalu reset DP saat nama berubah
+                setDps([]);
+
                 if (!lowerName) {
-                    setItems(prev => prev.filter(item => item.isManual));
+                    setItems([]); // Reset list belanja jika nama dikosongkan
                     setFoundCount(0);
                     return;
                 }
+
                 let allMatches = [];
                 ['china', 'bkk', 'malaysia'].forEach(tripKey => {
                     const db = databases[tripKey] || [];
@@ -240,7 +238,9 @@
                     });
                 });
                 setFoundCount(allMatches.length);
-                setItems(prevItems => [...prevItems.filter(item => item.isManual), ...allMatches]);
+                
+                // REVISI: Mengganti total list (reset manual) dengan hasil pencarian otomatis yang baru
+                setItems(allMatches); 
             }, [customerName, databases]);
 
             // --- 6. EVENT HANDLERS ---
@@ -255,16 +255,19 @@
                 setIsLoading(true);
                 try {
                     const response = await fetch(url);
-                    processCSVData(await response.text(), activeTrip);
+                    if (response.ok) processCSVData(await response.text(), activeTrip);
                 } catch (error) { console.error(error); }
                 finally { setIsLoading(false); }
+            };
+
+            const handleResetTotal = () => {
+                setCustomerName(""); setItems([]); setDps([]); setItemName(""); setItemPrice(""); setItemQty("1"); setDpInput(""); setShowResetConfirm(false);
             };
 
             const addItem = (e) => {
                 e.preventDefault();
                 if (!itemName || !itemPrice) return;
                 const newItem = { id: `manual-${Date.now()}`, name: itemName, qty: pN(itemQty), price: pN(itemPrice), trip: activeTrip, isManual: true };
-                // Perubahan di sini: Menggunakan [...items, newItem] agar barang baru berada di posisi terakhir
                 setItems([...items, newItem]);
                 setItemName(""); setItemPrice(""); setItemQty("1");
             };
@@ -283,20 +286,14 @@
             const totalDp = dps.reduce((a, b) => a + b.amount, 0);
             const sisa = total - totalDp;
 
-            // --- WA FORMAT (URUTAN: CHINA -> BKK -> MALAYSIA) ---
             const getWA = () => {
-                let t = `${tripTitle.toUpperCase()}\n`;
-                t += `Customer: ${customerName || '-'}\n`;
-                t += `------------------\n`; 
-                
+                let t = `${tripTitle.toUpperCase()}\nCustomer: ${customerName || '-'}\n------------------\n`; 
                 const groups = { china: [], bkk: [], malaysia: [], manual: [] };
                 items.forEach(it => { 
                     const key = it.trip || 'manual';
                     if (groups[key]) groups[key].push(it); else groups['manual'].push(it);
                 });
-
                 let activeTripCount = Object.values(groups).filter(g => g.length > 0).length;
-
                 const printSec = (name, list, flag) => {
                     if (list.length === 0) return "";
                     let sec = `\nTRIP ${name} ${flag}\n`;
@@ -309,19 +306,8 @@
                     if (activeTripCount > 1) sec += `   _*Subtotal: Rp ${formatR(subTotal)}*_\n`;
                     return sec;
                 };
-
-                // URUTAN SESUAI REQUEST
-                t += printSec("CHINA", groups.china, "🇨🇳");
-                t += printSec("BANGKOK", groups.bkk, "🇹🇭");
-                t += printSec("MALAYSIA", groups.malaysia, "🇲🇾");
-                t += printSec("LAINNYA", groups.manual, "📦");
-
-                t += `\n------------------\n`;
-                t += `TOTAL TAGIHAN\n`;
-                t += `Total Belanja: ${formatR(total)}\n`;
-                if (totalDp > 0) t += `DP Masuk: ${formatR(totalDp)}\n`;
-                t += `Sisa Pembayaran: ${sisa === 0 ? "LUNAS ✅" : formatR(sisa)}\n`;
-                t += `\nTerima kasih sudah berbelanja\nMohon dicek kembali ya kak`;
+                t += printSec("CHINA", groups.china, "🇨🇳") + printSec("BANGKOK", groups.bkk, "🇹🇭") + printSec("MALAYSIA", groups.malaysia, "🇲🇾") + printSec("LAINNYA", groups.manual, "📦");
+                t += `\n------------------\nTOTAL TAGIHAN\nTotal: ${formatR(total)}\n${totalDp > 0 ? `DP Masuk: ${formatR(totalDp)}\n` : ``}Sisa: ${sisa === 0 ? "LUNAS ✅" : formatR(sisa)}\n\nTerima kasih sudah berbelanja\nMohon dicek kembali ya kak`;
                 return t;
             };
 
@@ -365,8 +351,15 @@
                         <div className="flex gap-2 items-center">
                             <input value={tripTitle} onChange={(e) => setTripTitle(e.target.value)} className="font-bold text-sm outline-none flex-1 bg-transparent border-b border-transparent focus:border-black" placeholder="JUDUL NOTA..." />
                             <div className="flex gap-1">
-                                <button onClick={handleSheetSync} className="border border-black p-2 rounded-sm bg-white hover:bg-gray-50">{isLoading ? <RefreshCw size={16} className="animate-spin"/> : <CloudDownload size={16} />}</button>
-                                <button onClick={() => fileInputRef.current?.click()} className="border border-black p-2 rounded-sm bg-white hover:bg-gray-50"><FileUp size={16} /></button>
+                                <button onClick={handleSheetSync} title="Sinkron Cloud" className="border border-black p-2 rounded-sm bg-white hover:bg-gray-50">
+                                    {isLoading ? <RefreshCw size={16} className="animate-spin"/> : <CloudDownload size={16} />}
+                                </button>
+                                <button onClick={() => setShowResetConfirm(true)} title="Reset Nota" className="border border-red-600 p-2 rounded-sm bg-white text-red-600 hover:bg-red-50">
+                                    <Trash2 size={16} />
+                                </button>
+                                <button onClick={() => fileInputRef.current?.click()} title="Upload CSV" className="border border-black p-2 rounded-sm bg-white hover:bg-gray-50">
+                                    <FileUp size={16} />
+                                </button>
                             </div>
                             <input type="file" ref={fileInputRef} onChange={(e) => {
                                 const file = e.target.files[0];
@@ -382,7 +375,6 @@
                 <main className="flex-1 p-4 overflow-y-auto bg-gray-50 pb-32 custom-scrollbar">
                     <div className="bg-white border border-black shadow-sm rounded-sm overflow-hidden animate-in">
                         
-                        {/* Section 1: Customer */}
                         <div className="p-4 border-b border-gray-200 relative z-10">
                             <div className="flex justify-between items-center mb-2">
                                 <p className="text-[10px] font-bold uppercase text-gray-500 flex items-center gap-2"><User size={12} /> Customer</p>
@@ -400,7 +392,6 @@
                             </div>
                         </div>
 
-                        {/* Section 2: Input Barang */}
                         <div className="p-4 border-b border-gray-200">
                             <p className="text-[10px] font-bold uppercase text-gray-500 mb-3 flex items-center gap-2"><Receipt size={12} /> Item Manual</p>
                             <form onSubmit={addItem} className="space-y-3">
@@ -418,7 +409,6 @@
                             </form>
                         </div>
 
-                        {/* Section 3: Input DP */}
                         <div className="p-4 border-b border-gray-200">
                             <p className="text-[10px] font-bold uppercase text-gray-500 mb-3 flex items-center gap-2"><CreditCard size={12} /> Input DP</p>
                             <form onSubmit={handleAddDp} className="flex gap-3 items-end">
@@ -430,7 +420,6 @@
                             </form>
                         </div>
 
-                        {/* Rincian Summary Trigger */}
                         <button onClick={() => setShowModal(true)} className="w-full p-4 flex justify-between items-center hover:bg-gray-50 border-b border-gray-200">
                             <div className="flex items-center gap-3">
                                 <div className="bg-black text-white p-2 rounded-sm"><LayoutList size={16} /></div>
@@ -442,7 +431,6 @@
                             <ChevronRight size={18} className="text-gray-400" />
                         </button>
 
-                        {/* Bottom Total View */}
                         <div className="p-4 bg-gray-50 space-y-4">
                             <div className="flex justify-between items-center px-1">
                                 <div className="flex flex-col"><span className="text-[10px] font-bold text-gray-400 uppercase">Total</span><span className="text-sm font-black">Rp {formatR(total)}</span></div>
@@ -464,7 +452,24 @@
                     </div>
                 </main>
 
-                {/* MODAL: RINCIAN BELANJA (URUTAN: CHINA -> BKK -> MALAYSIA) */}
+                {/* MODAL: KONFIRMASI RESET */}
+                {showResetConfirm && (
+                    <div className="fixed inset-0 bg-black/80 z-[100] flex items-center justify-center p-6 animate-in">
+                        <div className="bg-white w-full max-w-xs p-6 border-2 border-black rounded-lg shadow-2xl text-center">
+                            <div className="w-16 h-16 bg-red-50 text-red-600 rounded-full flex items-center justify-center mx-auto mb-4">
+                                <Trash2 size={32} />
+                            </div>
+                            <h3 className="font-black text-lg uppercase mb-2">Reset Nota?</h3>
+                            <p className="text-xs text-gray-500 font-bold mb-6">Seluruh data customer, barang, dan DP akan dihapus permanen.</p>
+                            <div className="grid grid-cols-2 gap-3">
+                                <button onClick={() => setShowResetConfirm(false)} className="py-3 border-2 border-black font-black uppercase text-[10px] rounded hover:bg-gray-50">Batal</button>
+                                <button onClick={handleResetTotal} className="py-3 bg-red-600 text-white font-black uppercase text-[10px] rounded hover:bg-red-700">Ya, Hapus</button>
+                            </div>
+                        </div>
+                    </div>
+                )}
+
+                {/* MODAL: RINCIAN BELANJA */}
                 {showModal && (
                     <div className="fixed inset-0 bg-black/80 z-[60] flex items-center justify-center p-4 animate-in">
                         <div className="bg-white w-full max-w-md h-[85vh] flex flex-col border-2 border-black rounded shadow-2xl overflow-hidden">
