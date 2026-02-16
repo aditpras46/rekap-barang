@@ -99,6 +99,7 @@
             
             const nameRef = useRef(""); 
             const dpInputRef = useRef(null);
+            const itemNameRef = useRef(null); // Ref untuk input barang manual
 
             const defaultLinks = {
                 china: "https://docs.google.com/spreadsheets/d/e/2PACX-1vQqib3ZLcjWleprwKHZgpDYArhKoeKDWgZeW_VRm7Wm8xgx-XbARU0hOo62fWzUtjC3TIIEplSnZfb7/pub?output=csv",
@@ -225,11 +226,9 @@
                 };
             }, [processCSVData, isAutoRefreshEnabled]);
 
-            // REVISI LOGIK: Reset data hanya jika ganti nama, dan penapisan TEPAT (Exact Match)
             useEffect(() => {
                 const lowerName = customerName.trim().toLowerCase();
                 
-                // Jika nama pelanggan berubah (bukan kerana sync), kosongkan DP
                 if (nameRef.current !== customerName) {
                     setDps([]); 
                     nameRef.current = customerName;
@@ -244,7 +243,6 @@
                 let allMatches = [];
                 ['china', 'bkk', 'malaysia'].forEach(tripKey => {
                     const db = databases[tripKey] || [];
-                    // REVISI: Menggunakan perbandingan TEPAT (===) untuk mengelakkan barangan tergabung
                     const matches = db.filter(row => row.nama && row.nama.toLowerCase().trim() === lowerName);
                     matches.forEach(order => {
                         allMatches.push({
@@ -259,7 +257,6 @@
                 });
                 
                 setFoundCount(allMatches.length);
-                // Menetapkan barangan automatik (ini juga meriset barangan manual pelanggan sebelumnya)
                 setItems(allMatches); 
             }, [customerName, databases]);
 
@@ -290,6 +287,11 @@
                 const newItem = { id: `manual-${Date.now()}`, name: itemName, qty: pN(itemQty), price: pN(itemPrice), trip: activeTrip, isManual: true };
                 setItems([...items, newItem]);
                 setItemName(""); setItemPrice(""); setItemQty("1");
+                
+                // Fokus kembali ke input nama barang agar keyboard tetap terbuka di HP
+                if (itemNameRef.current) {
+                    setTimeout(() => { itemNameRef.current.focus(); }, 10);
+                }
             };
 
             const updateItem = (id, field, value) => {
@@ -302,8 +304,9 @@
                 if (val > 0) { 
                     setDps(prev => [...prev, { id: Date.now(), amount: val }]); 
                     setDpInput(""); 
+                    // Fokus kembali ke input DP agar keyboard tetap terbuka di HP
                     if (dpInputRef.current) {
-                        setTimeout(() => { dpInputRef.current.focus(); }, 0);
+                        setTimeout(() => { dpInputRef.current.focus(); }, 10);
                     }
                 }
             };
@@ -439,7 +442,7 @@
                         <div className="p-4 border-b border-gray-200">
                             <p className="text-[10px] font-bold uppercase text-gray-500 mb-3 flex items-center gap-2"><Receipt size={12} /> Item Manual</p>
                             <form onSubmit={addItem} className="space-y-3">
-                                <input placeholder="Nama barang..." value={itemName} onChange={(e) => setItemName(e.target.value)} className="w-full p-2 text-base border-b border-gray-300 outline-none font-medium focus:border-black" />
+                                <input ref={itemNameRef} placeholder="Nama barang..." value={itemName} onChange={(e) => setItemName(e.target.value)} className="w-full p-2 text-base border-b border-gray-300 outline-none font-medium focus:border-black" />
                                 <div className="flex gap-3 items-end">
                                     <div className="flex-[2] relative border-b border-gray-300 focus-within:border-black">
                                         <span className="absolute left-0 top-1/2 -translate-y-1/2 text-gray-400 font-bold text-sm">Rp</span>
