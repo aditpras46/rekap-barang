@@ -99,7 +99,7 @@
             
             const nameRef = useRef(""); 
             const dpInputRef = useRef(null);
-            const itemNameRef = useRef(null); 
+            const nameInputRef = useRef(null);
 
             const defaultLinks = {
                 china: "https://docs.google.com/spreadsheets/d/e/2PACX-1vQqib3ZLcjWleprwKHZgpDYArhKoeKDWgZeW_VRm7Wm8xgx-XbARU0hOo62fWzUtjC3TIIEplSnZfb7/pub?output=csv",
@@ -288,10 +288,9 @@
                 setItems([...items, newItem]);
                 setItemName(""); setItemPrice(""); setItemQty("1");
                 
-                // Perbaikan: Fokus lebih kuat agar keyboard tetap muncul
-                if (itemNameRef.current) {
-                    itemNameRef.current.focus();
-                    setTimeout(() => { if (itemNameRef.current) itemNameRef.current.focus(); }, 50);
+                // Keyboard langsung tertutup untuk input barang manual sesuai permintaan logika "langsung hilang"
+                if (document.activeElement instanceof HTMLElement) {
+                    document.activeElement.blur();
                 }
             };
 
@@ -305,7 +304,7 @@
                 if (val > 0) { 
                     setDps(prev => [...prev, { id: Date.now(), amount: val }]); 
                     setDpInput(""); 
-                    // Perbaikan: Fokus lebih kuat agar keyboard tetap muncul
+                    // KHUSUS DP: Keyboard tetap muncul (fokus ulang)
                     if (dpInputRef.current) {
                         dpInputRef.current.focus();
                         setTimeout(() => { if (dpInputRef.current) dpInputRef.current.focus(); }, 50);
@@ -410,13 +409,6 @@
                                     <FileUp size={16} />
                                 </button>
                             </div>
-                            <input type="file" ref={fileInputRef} onChange={(e) => {
-                                const file = e.target.files[0];
-                                if (!file) return;
-                                const reader = new FileReader();
-                                reader.onload = (ev) => processCSVData(ev.target.result, activeTrip);
-                                reader.readAsText(file);
-                            }} accept=".csv" className="hidden" />
                         </div>
                     </div>
                 </header>
@@ -430,11 +422,33 @@
                                 {customerName && <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-50 text-blue-700">{foundCount} Match</span>}
                             </div>
                             <div className="relative">
-                                <input placeholder="Ketik nama customer..." value={customerName} onChange={(e) => { setCustomerName(e.target.value); setShowSuggestions(true); }} onFocus={() => setShowSuggestions(true)} onBlur={() => setTimeout(() => setShowSuggestions(false), 200)} autoComplete="off" className="w-full p-2 text-base border-b border-black focus:border-black outline-none font-bold" />
+                                <input 
+                                    ref={nameInputRef}
+                                    placeholder="Ketik nama customer..." 
+                                    value={customerName} 
+                                    onChange={(e) => { setCustomerName(e.target.value); setShowSuggestions(true); }} 
+                                    onFocus={() => setShowSuggestions(true)} 
+                                    onBlur={() => setTimeout(() => setShowSuggestions(false), 200)} 
+                                    onKeyDown={(e) => { if (e.key === 'Enter') nameInputRef.current?.blur(); }}
+                                    autoComplete="off" 
+                                    className="w-full p-2 text-base border-b border-black focus:border-black outline-none font-bold" 
+                                />
                                 {showSuggestions && customerName && suggestions.length > 0 && (
                                     <div className="absolute left-0 right-0 top-full mt-1 bg-white border-2 border-black max-h-48 overflow-y-auto z-50 rounded-sm shadow-lg">
                                         {suggestions.map((name, idx) => (
-                                            <div key={idx} onMouseDown={(e) => { e.preventDefault(); setCustomerName(name); setShowSuggestions(false); }} className="p-3 text-sm font-bold uppercase border-b border-gray-100 hover:bg-gray-100 cursor-pointer">{name}</div>
+                                            <div 
+                                                key={idx} 
+                                                onMouseDown={(e) => { 
+                                                    e.preventDefault(); 
+                                                    setCustomerName(name); 
+                                                    setShowSuggestions(false); 
+                                                    // NAMA: Keyboard langsung hilang setelah pilih saran
+                                                    nameInputRef.current?.blur();
+                                                }} 
+                                                className="p-3 text-sm font-bold uppercase border-b border-gray-100 hover:bg-gray-100 cursor-pointer"
+                                            >
+                                                {name}
+                                            </div>
                                         ))}
                                     </div>
                                 )}
@@ -444,7 +458,7 @@
                         <div className="p-4 border-b border-gray-200">
                             <p className="text-[10px] font-bold uppercase text-gray-500 mb-3 flex items-center gap-2"><Receipt size={12} /> Item Manual</p>
                             <form onSubmit={addItem} className="space-y-3">
-                                <input ref={itemNameRef} placeholder="Nama barang..." value={itemName} onChange={(e) => setItemName(e.target.value)} className="w-full p-2 text-base border-b border-gray-300 outline-none font-medium focus:border-black" />
+                                <input placeholder="Nama barang..." value={itemName} onChange={(e) => setItemName(e.target.value)} className="w-full p-2 text-base border-b border-gray-300 outline-none font-medium focus:border-black" />
                                 <div className="flex gap-3 items-end">
                                     <div className="flex-[2] relative border-b border-gray-300 focus-within:border-black">
                                         <span className="absolute left-0 top-1/2 -translate-y-1/2 text-gray-400 font-bold text-sm">Rp</span>
@@ -459,7 +473,7 @@
                         </div>
 
                         <div className="p-4 border-b border-gray-200">
-                            <p className="text-[10px] font-bold uppercase text-gray-500 mb-3 flex items-center gap-2"><CreditCard size={12} /> Input DP</p>
+                            <p className="text-[10px] font-bold uppercase text-gray-500 mb-3 flex items-center gap-2"><CreditCard size={12} /> Input DP (Keyboard Stay)</p>
                             <form onSubmit={handleAddDp} className="flex gap-3 items-end">
                                 <div className="relative flex-1 border-b border-gray-300 focus-within:border-black">
                                     <span className="absolute left-0 top-1/2 -translate-y-1/2 text-gray-400 font-bold text-sm">Rp</span>
